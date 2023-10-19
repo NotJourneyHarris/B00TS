@@ -1,22 +1,26 @@
 import tkinter as tk
 from tkinter import filedialog
 import librosa
+import pygame
 import soundfile as sf
 from pyrubberband import time_stretch
 from pydub import AudioSegment
 import os
 import paramiko
 
-def send_audio_to_pi(file_path, raspberry_pi_ip, username, password):
+def sendToPi(file_path, bpm, raspberry_pi_ip, username, password):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     try:
-        ssh.connect(raspberry_pi_ip, username='pi@raspberry', password="raspberry")
+        ssh.connect(raspberry_pi_ip, username=username, password=password)
 
         # Use scp to copy the audio file to the Raspberry Pi
         scp_command = f'scp {file_path} pi@{raspberry_pi_ip}:received_audio.wav'
         os.system(scp_command)
+
+        # Send the BPM value to a text file on the Raspberry Pi
+        stdin, stdout, stderr = ssh.exec_command(f'echo {bpm} > Boots_v1.0/bpm.txt')
 
     except Exception as e:
         print(f"Error: {e}")
@@ -68,6 +72,7 @@ def inputAudio():
         result_label.config(text=f"Speeding up by a factor of {stretch_factor:.2f}")
         audio = AudioSegment.from_file(drum_loop_file)
         stretched_audio = audio.speedup(playback_speed=stretch_factor)
+        stretched_audio.export(output_file, format="wav")
     # If stretch_factor is less than 1, slow down using pyrubberband
     elif stretch_factor < 1.0:
         result_label.config(text=f"Slowing down by a factor of {1/stretch_factor:.2f}")
@@ -78,18 +83,15 @@ def inputAudio():
         return
 
     # Export the output
-    if stretch_factor > 1.0:
-        stretched_audio.export(output_file, format="wav")
-        result_label.config(text="Audio stretched and saved successfully.")
-        send_audio_to_pi(output_file, raspberry_pi_ip, username, password)
-        play_audio_on_pi()
-        
-        # Show the "Play Output" button
-        play_output_button.pack(pady=10)
+    result_label.config(text="Audio stretched and saved successfully.")
+    sendToPi(output_file, input_tempo, raspberry_pi_ip, username, password)
+
+    # Show the "Play Output" button
+    play_output_button.pack(pady=10)
 
 # Function to play the output file
 def playOutput():
-    output_file = 'Boots_v1.0/Your_Song.wav'    
+    output_file = 'Boots_v1.0/Your_Song.wav'
     os.system(f'afplay {output_file}')
 
 # Create the main window
@@ -141,6 +143,11 @@ play_output_button.pack(pady=10)
 # Label to display results
 result_label = tk.Label(root, text="", fg=text_color, bg='black')
 result_label.pack()
+
+# Replace the following values with your Raspberry Pi's actual IP address, username, and password
+raspberry_pi_ip = "138.47.116.85"
+username = "Pi"
+password = "Raspberry"
 
 # Run the main event loop
 root.mainloop()
