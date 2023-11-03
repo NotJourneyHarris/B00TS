@@ -1,43 +1,38 @@
 import tkinter as tk
 from tkinter import filedialog
 import librosa
-import pygame
 import soundfile as sf
 from pyrubberband import time_stretch
 from pydub import AudioSegment
-import os
-import paramiko
+import pygame
+import RPi.GPIO as GPIO
+import time
 
-def sendToPi(file_path, bpm, raspberry_pi_ip, username, password):
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+# Set up GPIO
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(17, GPIO.OUT)
+GPIO.setup(18, GPIO.OUT)
+GPIO.setup(19, GPIO.OUT)
+GPIO.setup(20, GPIO.OUT)
 
-    try:
-        ssh.connect(raspberry_pi_ip, username=username, password=password)
-
-        # Use scp to copy the audio file to the Raspberry Pi
-        scp_command = f'scp {file_path} pi@{raspberry_pi_ip}:received_audio.wav'
-        os.system(scp_command)
-
-        # Send the BPM value to a text file on the Raspberry Pi
-        stdin, stdout, stderr = ssh.exec_command(f'echo {bpm} > Boots_v1.0/bpm.txt')
-
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        ssh.close()
+# Declare global variables
+user_song = ""
+output_file = ""
+selected_drum_loop = ""
 
 # Function to time-stretch an audio track to match the reference song's tempo
 def inputAudio():
+    global user_song, output_file, selected_drum_loop
+
     user_song = entry_path.get()
-    selected_drum_loop = drum_loop_var.get()  # Get the selected drum loop
-    output_file = 'Boots_v1.0/Your_Song.wav'
+    output_file = '/home/boobo/Desktop/Boots_v1.0/Your_Song.wav'
+    selected_drum_loop = drum_loop_var.get()
 
     # Define the drum loop file based on the selection
     if selected_drum_loop == "Drum Loop 1":
-        drum_loop_file = 'Boots_v1.0/drum_loop.wav'
+        drum_loop_file = '/home/boobo/Desktop/Boots_v1.0/drum_loop.wav'
     elif selected_drum_loop == "Drum Loop 2":
-        drum_loop_file = 'Boots_v1.0/drum_loop2.wav'
+        drum_loop_file = '/home/boobo/Desktop/Boots_v1.0/drum_loop2.wav'
     else:
         result_label.config(text="Error: Invalid drum loop selection.")
         return
@@ -83,71 +78,175 @@ def inputAudio():
         return
 
     # Export the output
-    result_label.config(text="Audio stretched and saved successfully.")
-    sendToPi(output_file, input_tempo, raspberry_pi_ip, username, password)
+    result_label.config(text="Audio stretched successfully.")
+
+    # Show the "Mix Audio" button
+    mix_audio_button.pack(pady=20)
 
     # Show the "Play Output" button
-    play_output_button.pack(pady=10)
+    play_output_button.pack(pady=20)
+
+# Function to mix the audio
+def mixAudio():
+    global user_song, output_file
+
+    # Load the user's song and the stretched drum loop
+    user_audio = AudioSegment.from_file(user_song)
+    stretched_audio = AudioSegment.from_file(output_file)
+
+    mixed_audio = user_audio.overlay(stretched_audio)
+
+    # Export the mixed audio
+    mixed_audio.export(output_file, format="wav")
+
+    # Export the output
+    result_label.config(text="Audio stretched and mixed successfully.")
+
+    # Show the "Play Output" button
+    play_output_button.pack(pady=20)
 
 # Function to play the output file
 def playOutput():
-    output_file = 'Boots_v1.0/Your_Song.wav'
-    os.system(f'afplay {output_file}')
+    output_file = '/home/boobo/Desktop/Boots_v1.0/Your_Song.wav'
+
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load(output_file)
+        pygame.mixer.music.play()
+
+        # Analyze beats using librosa
+        y, sr = librosa.load(output_file, sr=None)
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempo, _ = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+
+        beat_duration = 60 / tempo  # Duration of one beat in seconds
+
+        # Wait for the music to start
+        time.sleep(beat_duration)
+
+        while pygame.mixer.music.get_busy():
+            # Get the current beat
+            beat_start_time = pygame.mixer.music.get_pos() / 1000.0
+            current_beat = int(beat_start_time / beat_duration)
+
+            # Turn off all LEDs
+            GPIO.output(17, GPIO.LOW)
+            GPIO.output(18, GPIO.LOW)
+            GPIO.output(19, GPIO.LOW)
+            GPIO.output(20, GPIO.LOW)
+
+            # Turn on one LED based on the current beat
+            if current_beat % 4 == 0:
+                GPIO.output(17, GPIO.HIGH)
+            elif current_beat % 4 == 1:
+                GPIO.output(18, GPIO.HIGH)
+            elif current_beat % 4 == 2:
+                GPIO.output(19, GPIO.HIGH)
+            elif current_beat % 4 == 3:
+                GPIO.output(20, GPIO.HIGH)
+
+            # Adjust sleep time to control the LED flashing speed
+            time.sleep(0.05)  # Adjust as needed
+
+        # Stop flashing LEDs after playback
+        GPIO.output(17, GPIO.LOW)
+        GPIO.output(18, GPIO.LOW)
+        GPIO.output(19, GPIO.LOW)
+        GPIO.output(20, GPIO.LOW)
+
+    except Exception as e:
+        result_label.config(text=f"Error playing output: {e}")
+        return
+
+# Function to reset the system
+def resetSystem():
+    global user_song, output_file, selected_drum_loop
+
+    # Clear entry widget
+    entry_path.delete(0, tk.END)
+
+    # Reset dropdown menu
+    drum_loop_var.set(drum_loops[0])
+
+    # Clear labels
+    initial_tempo_label.config(text="")
+    user_song_label.config(text="")
+    result_label.config(text="")
+
+    # Turn off LEDs
+    GPIO.output(17, GPIO.LOW)
+    GPIO.output(18, GPIO.LOW)
+    GPIO.output(19, GPIO.LOW)
+    GPIO.output(20, GPIO.LOW)
+
+    # Stop music playback
+    pygame.mixer.music.stop()
 
 # Create the main window
 root = tk.Tk()
+'''window_width = 1024
+window_height = 600
+root.geometry(f"{window_width}x{window_height}")'''
+root.attributes('-fullscreen', True)
 root.title("BOOTS v1.0")
 
 # Set the background color and font
 root.configure(bg='black')
-root.option_add('*Font', 'Courier 12')
+root.option_add('*Font', 'Courier 24')
 
 # Set text color to white
 text_color = 'white'
 
 # Create a label
 label = tk.Label(root, text="Select a reference song:", fg=text_color, bg='black')
-label.pack(pady=10)
+label.pack(pady=20)
 
 # Create an entry widget to display the selected file path
 entry_path = tk.Entry(root, width=50)
 entry_path.pack()
 
 # Create a button to browse for an input song file
-browse_button = tk.Button(root, text="Browse", fg="black", bg='black', command=lambda: entry_path.insert(0, filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav *.mp3")])))
-browse_button.pack(pady=10)
+browse_button = tk.Button(root, text="Browse", fg="white", bg='black', command=lambda: entry_path.insert(0, filedialog.askopenfilename(filetypes=[("Audio Files", "*.wav *.mp3")])))
+browse_button.pack(pady=20)
 
 # Create a dropdown menu to select the drum loop
 drum_loops = ["Drum Loop 1", "Drum Loop 2"]
 drum_loop_var = tk.StringVar()
 drum_loop_var.set(drum_loops[0])  # Set the initial selection
 drum_loop_menu = tk.OptionMenu(root, drum_loop_var, *drum_loops)
-drum_loop_menu.config(fg=text_color, bg='black')
-drum_loop_menu.pack(pady=10)
+drum_loop_menu.config(fg='black', bg='white')
+drum_loop_menu.pack(pady=20)
 
 # Create a button to start time-stretching
-stretch_button = tk.Button(root, text="Stretch Audio", fg='black', bg='black', command=inputAudio)
-stretch_button.pack(pady=10)
+stretch_button = tk.Button(root, text="Stretch Audio", fg='white', bg='black', command=inputAudio)
+stretch_button.pack(pady=20)
 
 # Labels to display drum loop and input track's tempo
-initial_tempo_label = tk.Label(root, text="", fg=text_color, bg='black')
+initial_tempo_label = tk.Label(root, text="", fg='white', bg='black')
 initial_tempo_label.pack()
-user_song_label = tk.Label(root, text="", fg=text_color, bg='black')
+user_song_label = tk.Label(root, text="", fg='white', bg='black')
 user_song_label.pack()
 
 # Create a button to play the output file
-play_output_button = tk.Button(root, text="Play Output", fg="black", bg='black', command=playOutput)
+play_output_button = tk.Button(root, text="Play Output", fg="white", bg='black', command=playOutput)
 
-play_output_button.pack(pady=10)
+# Create a button to reset the system
+reset_button = tk.Button(root, text="Reset", fg="white", bg='black', command=resetSystem)
 
+# Create the Mix Audio button, but initially, it should be hidden
+mix_audio_button = tk.Button(root, text="Mix Audio", fg="white", bg='black', command=mixAudio)
+mix_audio_button.pack_forget()
+# Label to reset loop
+reset_button = tk.Button(root, text="Reset", fg="white", bg='black', command=resetSystem)
+reset_button.pack(pady=20)
+
+play_output_button.pack_forget()
 # Label to display results
-result_label = tk.Label(root, text="", fg=text_color, bg='black')
+result_label = tk.Label(root, text="", fg='white', bg='black')
 result_label.pack()
-
-# Replace the following values with your Raspberry Pi's actual IP address, username, and password
-raspberry_pi_ip = "138.47.116.85"
-username = "Pi"
-password = "Raspberry"
 
 # Run the main event loop
 root.mainloop()
+
+# Cleanup GPIO on program exit
+GPIO.cleanup()
