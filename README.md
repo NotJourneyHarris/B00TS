@@ -1,8 +1,7 @@
 B00TS Drum Machine
 
 Designed for my CSC 132 class, B00TS is a charming little retro-inspired drum machine. 
-Named after the onomatopoeic "boots n cats" used to mimic drum sounds. 
-This project, engineered to operate on a Raspberry Pi
+Named after the onomatopoea "boots n cats" used to mimic drum sounds and engineered to operate on a Raspberry Pi
 
 Key Highlights:
 Utilizes libraries like Tkinter, Librosa, and Pygame, enabling the time-stretching of drum loops to align with any audio track.
